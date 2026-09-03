@@ -1,20 +1,26 @@
 #ifndef AICONSULTPAGE_H
 #define AICONSULTPAGE_H
 
+#include <QImage>
 #include <QWidget>
 
+class CameraSerial;
+class DeviceCamera;
 class QLabel;
 class QLineEdit;
+class QPushButton;
 class QScrollArea;
+class QThread;
 class QVBoxLayout;
 
 /**
  * @brief 页面4：AI 快速问诊页（QStackedWidget 索引 4，由首页【药费查询】按钮进入）
  *
  * 左右两栏 + 底部通栏布局的聊天问诊界面：
- *  - 左侧：白色圆角视频区域（内部 QLabel 承载内容，纯代码、不依赖
- *    multimedia 模块，默认显示医生占位图）+ 下方单行 4 个常见症状
- *    快捷按钮（与右侧【返回首页】同行）。
+ *  - 左侧：白色圆角视频卡片（顶部【打开/关闭】按钮 + 内部 QLabel 承载画面，
+ *    纯代码、不依赖 multimedia 模块）：初始化即连接舌苔检测摄像头（RV1106），
+ *    【打开】后 QLabel 铺满显示硬件上传的图像，未打开 / 未收到帧时显示纯黑。
+ *    QLabel 下方单行 4 个常见症状快捷按钮（与右侧【返回首页】同行）。
  *  - 右侧：白色圆角聊天窗口（深蓝标题栏：医生头像 + "AI 快速问诊" + 在线状态
  *          + 可滚动的 ChatBubble 对话气泡区）+ 蓝色【返回首页】按钮。
  *    顶部用透明占位与左侧【症状输入】标题等高，使视频区域与聊天框高度对齐。
@@ -31,6 +37,7 @@ class AIConsultPage : public QWidget
 
 public:
     explicit AIConsultPage(QWidget *parent = nullptr);
+    ~AIConsultPage() override;
 
 signals:
     void backRequested();                        // 【返回首页】→ 首页（索引 0）
@@ -46,13 +53,29 @@ private:
     void sendToAgent(const QString &userText);         // 用户消息 → ConsultAgent → TTS
     void onSend();                                     // 发送输入框内容（回车/按钮）
 
-    QLabel       *m_videoLabel  = nullptr; // 视频承载 QLabel（QLabel 承载内容，后续可换图/换动画）
+    void initCamera();          // 初始化硬件摄像头（启动即连接设备）
+    void refreshVideoLabel();   // 按开关状态刷新视频标签（画面铺满 / 纯黑）
+
+private slots:
+    void onCameraFrame(const QImage &frame); // 收到硬件上传图像帧
+    void onToggleCamera(bool checked);       // 【打开/关闭】按钮切换
+
+private: // 成员
+    QLabel       *m_videoLabel  = nullptr; // 视频承载 QLabel（承载硬件图像 / 纯黑）
+    QPushButton  *m_toggleBtn   = nullptr; // 摄像头【打开/关闭】按钮
     QLineEdit    *m_inputEdit   = nullptr; // 症状描述输入框
     QScrollArea  *m_scroll      = nullptr; // 对话气泡滚动区
     QWidget      *m_chatContent = nullptr; // 气泡内容区
     QVBoxLayout  *m_chatLayout  = nullptr; // 气泡垂直布局（末尾 stretch）
     QString       m_doctorAvatar;          // 医生头像（AI 侧）
     QString       m_userAvatar;            // 用户头像（用户侧）
+
+    DeviceCamera *m_camera       = nullptr; // 舌苔摄像头 TCP 接收器（独立线程）
+    QThread      *m_cameraThread = nullptr; // 摄像头网络线程（不阻塞 UI）
+    CameraSerial *m_serialCtl    = nullptr; // 舌苔摄像头串口控制器（独立线程）
+    QThread      *m_serialThread = nullptr; // 摄像头串口线程（不阻塞 UI）
+    QImage        m_latestFrame;            // 最近收到的一帧（未打开时也持续缓存）
+    bool          m_cameraOn     = false;   // 是否显示摄像头画面（默认关闭 = 纯黑）
 };
 
 #endif // AICONSULTPAGE_H

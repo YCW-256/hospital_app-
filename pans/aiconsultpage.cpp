@@ -3,6 +3,8 @@
 #include "../audio/ttsplayer.h"
 #include "../core/iconfactory.h"
 #include "../core/uistyle.h"
+#include "../device/cameraserial.h"
+#include "../device/devicecamera.h"
 #include "childs/chatbubble.h"
 #include "childs/circularavatar.h"
 
@@ -14,12 +16,16 @@
 #include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMetaObject>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSize>
 #include <QStringList>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -55,6 +61,32 @@ QPushButton *createSymptomButton(const QString &text, const QPixmap &icon, QWidg
         "}"));
     return btn;
 }
+
+/* 视频画面圆角半径：与 QLabel#videoLabel 样式保持一致 */
+const int kVideoLabelRadius = 16;
+
+/* 生成"铺满且不变形"的画面位图：等比放大、居中裁剪，圆角之外透明以露出纯黑底 */
+QPixmap makeCoverPixmap(const QImage &frame, const QSize &target)
+{
+    QPixmap cover(target);
+    cover.fill(Qt::transparent);
+    if (frame.isNull() || target.width() <= 0 || target.height() <= 0)
+        return cover;
+
+    QPixmap scaled = QPixmap::fromImage(frame);
+    scaled = scaled.scaled(target, Qt::KeepAspectRatioByExpanding,
+                           Qt::SmoothTransformation);
+
+    QPainter painter(&cover);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    QPainterPath clip;
+    clip.addRoundedRect(QRectF(0, 0, target.width(), target.height()),
+                        kVideoLabelRadius, kVideoLabelRadius);
+    painter.setClipPath(clip);
+    painter.drawPixmap((target.width() - scaled.width()) / 2,
+                       (target.height() - scaled.height()) / 2, scaled);
+    return cover;
+}
 } // namespace
 
 AIConsultPage::AIConsultPage(QWidget *parent)
@@ -63,6 +95,7 @@ AIConsultPage::AIConsultPage(QWidget *parent)
     , m_userAvatar(UIStyle::resolveImagePath(QStringLiteral("icons/user.png")))
 {
     initLayout();
+    initCamera(); // 初始化即连接舌苔检测摄像头（TCP 接收图像）
 
     // 初始欢迎气泡 + 语音播报
     const QString welcome = QStringLiteral("您好，我是AI快速问诊医生，请选择或输入您的主要症状，"
@@ -100,36 +133,60 @@ QWidget *AIConsultPage::createLeftArea()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(16);
 
-    // ---------- 白色圆角视频区域：内部 QLabel 承载视频 ----------
+    // ---------- 白色圆角视频卡片：舌苔检测摄像头画面（纯代码，不依赖 multimedia 模块）----------
     auto *videoCard = new QWidget(left);
     UIStyle::styleCard(videoCard);
     layout->addWidget(videoCard, 1);
 
     auto *videoLayout = new QVBoxLayout(videoCard);
     videoLayout->setContentsMargins(12, 12, 12, 12);
+    videoLayout->setSpacing(10);
 
+    // 顶部一行：摄像头提示文字 + 【打开/关闭】显示开关
+    auto *ctrlRow = new QHBoxLayout;
+    ctrlRow->setSpacing(10);
+    auto *hintLabel = new QLabel(QStringLiteral("舌苔摄像头"), videoCard);
+    hintLabel->setStyleSheet(QStringLiteral(
+        "color: #1F4E79;"
+        "font-size: 16px;"
+        "font-weight: bold;"
+        "background: transparent;"));
+    ctrlRow->addWidget(hintLabel);
+    ctrlRow->addStretch(1);
+
+    m_toggleBtn = new QPushButton(QStringLiteral("打开"), videoCard);
+    m_toggleBtn->setObjectName(QStringLiteral("cameraToggleBtn"));
+    m_toggleBtn->setCheckable(true);   // 勾选=正在显示画面
+    m_toggleBtn->setCursor(Qt::PointingHandCursor);
+    m_toggleBtn->setFixedSize(120, 40);
+    m_toggleBtn->setStyleSheet(QStringLiteral(
+        "QPushButton#cameraToggleBtn {"
+        "    color: #FFFFFF;"
+        "    background-color: #1F4E79;"
+        "    border: none;"
+        "    border-radius: 20px;"
+        "    font-size: 15px;"
+        "    font-weight: bold;"
+        "}"
+        "QPushButton#cameraToggleBtn:hover { background-color: #2E86DE; }"
+        "QPushButton#cameraToggleBtn:checked { background-color: #2E86DE; }"
+        "QPushButton#cameraToggleBtn:checked:hover { background-color: #4A9CE8; }"));
+    connect(m_toggleBtn, &QPushButton::toggled, this, &AIConsultPage::onToggleCamera);
+    ctrlRow->addWidget(m_toggleBtn);
+    videoLayout->addLayout(ctrlRow);
+
+    // 画面承载 QLabel：默认纯黑；【打开】后铺满显示硬件上传图像（onCameraFrame 更新）
     m_videoLabel = new QLabel(videoCard);
     m_videoLabel->setObjectName(QStringLiteral("videoLabel"));
     m_videoLabel->setAlignment(Qt::AlignCenter);
     m_videoLabel->setStyleSheet(QStringLiteral(
         "QLabel#videoLabel {"
-        "    background-color: #1F2A3A;"
+        "    background-color: #000000;"
         "    color: #9FB3C8;"
         "    border-radius: 16px;"
         "    font-size: 16px;"
         "}"));
     videoLayout->addWidget(m_videoLabel, 1);
-
-    // QLabel 直接承载视频区域内容（纯代码，不依赖 multimedia 模块）：
-    // 默认显示医生占位图；后续如需视频，可直接对 m_videoLabel setMovie/setPixmap 更换内容。
-    const QString placeholderPath =
-        UIStyle::resolveImagePath(QStringLiteral("icons/doctor2.jpg"));
-    QPixmap placeholder(placeholderPath);
-    if (!placeholder.isNull())
-        m_videoLabel->setPixmap(placeholder.scaled(360, 220, Qt::KeepAspectRatio,
-                                                   Qt::SmoothTransformation));
-    else
-        m_videoLabel->setText(QStringLiteral("健康宣教视频"));
 
     // ---------- 底部：常见症状快捷按钮（单行 4 个，与右侧【返回首页】同一行） ----------
     const QStringList symptomNames = {
@@ -325,4 +382,91 @@ void AIConsultPage::onSend()
     m_inputEdit->clear();
     emit consultRequested(text);
     sendToAgent(text);
+}
+
+AIConsultPage::~AIConsultPage()
+{
+    // 安全停止摄像头串口线程：先跨线程执行 stop，再退出事件循环
+    if (m_serialThread) {
+        if (m_serialCtl && m_serialThread->isRunning()) {
+            QMetaObject::invokeMethod(m_serialCtl, "stop", Qt::BlockingQueuedConnection);
+            m_serialThread->quit();
+            m_serialThread->wait();
+        }
+        delete m_serialCtl;
+        m_serialCtl = nullptr;
+        delete m_serialThread;
+        m_serialThread = nullptr;
+    }
+    // 安全停止摄像头网络线程：先跨线程执行 stop（关闭 socket + 关闭自动重连），再退出事件循环
+    if (m_cameraThread) {
+        if (m_camera && m_cameraThread->isRunning()) {
+            QMetaObject::invokeMethod(m_camera, "stop", Qt::BlockingQueuedConnection);
+            m_cameraThread->quit();
+            m_cameraThread->wait();
+        }
+        // 线程已停，直接在持有线程释放两个对象
+        delete m_camera;
+        m_camera = nullptr;
+        delete m_cameraThread;
+        m_cameraThread = nullptr;
+    }
+}
+
+void AIConsultPage::initCamera()
+{
+    // 硬件默认参数取自参考上位机 rv1106_test01 的 ui 预设，此处写死
+    const QString cameraHost = QStringLiteral("10.1.1.144");
+    const quint16 cameraPort = 6868;
+    const QString serialPort = QStringLiteral("COM9"); // 用户实际使用的串口号
+    const qint32  serialBaud = 115200;
+
+    // 串口控制器：打开 COM9 成功后自动下发 0x0001，让摄像头开始推视频
+    m_serialCtl = new CameraSerial(serialPort, serialBaud);
+    m_serialThread = new QThread;
+    m_serialCtl->moveToThread(m_serialThread);
+    connect(m_serialThread, &QThread::started, m_serialCtl, &CameraSerial::start);
+    connect(m_serialCtl, &CameraSerial::logMessage, this,
+            [](const QString &msg) { qDebug().noquote() << msg; });
+    m_serialThread->start();
+
+    // 网络接收器：接收摄像头经 TCP 推来的图像帧（初始化即连接设备）
+    m_camera = new DeviceCamera(cameraHost, cameraPort);
+    m_cameraThread = new QThread;
+    m_camera->moveToThread(m_cameraThread);
+    connect(m_cameraThread, &QThread::started, m_camera, &DeviceCamera::start);
+    connect(m_camera, &DeviceCamera::frameReady, this, &AIConsultPage::onCameraFrame);
+    connect(m_camera, &DeviceCamera::logMessage, this,
+            [](const QString &msg) { qDebug().noquote() << msg; });
+    m_cameraThread->start();
+}
+
+void AIConsultPage::onCameraFrame(const QImage &frame)
+{
+    // 始终缓存最新帧（关闭时也继续接收），【打开】瞬间即可显示最新画面
+    m_latestFrame = frame;
+    if (m_cameraOn)
+        refreshVideoLabel();
+}
+
+void AIConsultPage::onToggleCamera(bool checked)
+{
+    m_cameraOn = checked;
+    m_toggleBtn->setText(checked ? QStringLiteral("关闭") : QStringLiteral("打开"));
+    refreshVideoLabel();
+    qDebug().noquote() << (checked ? QStringLiteral("[摄像头] 画面已打开")
+                                   : QStringLiteral("[摄像头] 画面已关闭，显示纯黑"));
+}
+
+void AIConsultPage::refreshVideoLabel()
+{
+    if (!m_videoLabel)
+        return;
+    if (m_cameraOn && !m_latestFrame.isNull()) {
+        // 打开且有图像：等比放大铺满（居中裁剪，不变形）
+        m_videoLabel->setPixmap(makeCoverPixmap(m_latestFrame, m_videoLabel->size()));
+    } else {
+        // 关闭或尚未收到帧：清空内容，露出纯黑底色
+        m_videoLabel->clear();
+    }
 }

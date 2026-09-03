@@ -1,4 +1,4 @@
-QT += core gui widgets svg network
+QT += core gui widgets svg network serialport
 
 CONFIG += c++17
 
@@ -9,7 +9,7 @@ CONFIG += c++17
 TARGET = patient_port2
 
 # 入口留在根目录；界面文件统一放在 pans/（含子控件 childs/），
-# 非界面文件按类别放在同级目录：agent/ 智能体、audio/ 语音、core/ 基础工具
+# 非界面文件按类别放在同级目录：agent/ 智能体、audio/ 语音、core/ 基础工具、device/ 硬件设备
 SOURCES += \
     MyTcp/cdata.cpp \
     MyTcp/socketlink.cpp \
@@ -39,7 +39,9 @@ SOURCES += \
     agent/consultagent.cpp \
     audio/ttsplayer.cpp \
     core/iconfactory.cpp \
-    core/uistyle.cpp
+    core/uistyle.cpp \
+    device/cameraserial.cpp \
+    device/devicecamera.cpp
 
 HEADERS += \
     MyTcp/cdata.h \
@@ -70,7 +72,9 @@ HEADERS += \
     agent/consultagent.h \
     audio/ttsplayer.h \
     core/iconfactory.h \
-    core/uistyle.h
+    core/uistyle.h \
+    device/cameraserial.h \
+    device/devicecamera.h
 
 # 纯代码构建，不使用 .ui 文件
 
