@@ -14,6 +14,8 @@ int CData::m_id=-1;
 QString CData::m_name;
 QWidget* CData::current_widget=nullptr;
 vector<doctor_info_use> CData::m_doctor_info{};
+doctor_info_use CData::m_register_doctor{};
+//QString CData::m_register_date;
 
 CData::CData() {
 

@@ -30,6 +30,7 @@ SOURCES += \
     pans/personalcenterpage.cpp \
     pans/modifyinfopage.cpp \
     pans/aiassistantpopup.cpp \
+    pans/childs/appointmentconfirmpopup.cpp \
     pans/childs/circularavatar.cpp \
     pans/childs/doctorcard.cpp \
     pans/childs/chatbubble.cpp \
@@ -60,6 +61,7 @@ HEADERS += \
     pans/personalcenterpage.h \
     pans/modifyinfopage.h \
     pans/aiassistantpopup.h \
+    pans/childs/appointmentconfirmpopup.h \
     pans/childs/circularavatar.h \
     pans/childs/doctorcard.h \
     pans/childs/chatbubble.h \

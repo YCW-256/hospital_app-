@@ -1,13 +1,17 @@
 #include "appointmentpage.h"
 #include "../core/uistyle.h"
+#include "childs/appointmentconfirmpopup.h"
 #include "childs/doctorcard.h"
 
 #include <QButtonGroup>
+#include <QDate>
 #include <QDebug>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QLabel>
+#include <QPoint>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStringList>
@@ -88,19 +92,96 @@ void AppointmentPage::flush()
     for (int c = 0; c < 3; ++c)
         m_doctorGrid->setColumnStretch(c, 1);
 
-    // 4) 卡片互斥选中 + 点击输出所选医生的完整信息（doctor_info_use 各属性）
+    // 4) 卡片互斥选中 + 点击输出所选医生的完整信息（doctor_info_use 各属性），
+    //    并弹出挂号确认弹窗（展示该医生的挂号信息，确认后触发 onAppointmentConfirmed）
     for (DoctorInfoCard *dc : m_doctorCards) {
         connect(dc, &DoctorInfoCard::clicked, this, [this, dc] {
             for (DoctorInfoCard *c : m_doctorCards)
                 c->setSelected(c == dc);
-            m_selectedDoctor = dc; // 记录当前选中的医生，供【确认预约】提交使用
+            m_selectedDoctor = dc; // 记录当前选中的医生，供挂号确认提交使用
             qDebug().noquote() << QStringLiteral("选择医生：id=%1 姓名=%2 科室=%3 时段=%4")
                                       .arg(dc->id())
                                       .arg(dc->name())
                                       .arg(dc->dept())
                                       .arg(dc->time());
+            showDoctorConfirm(dc); // 点击医生卡片 → 弹出确认挂号弹窗
         });
     }
+}
+
+void AppointmentPage::showDoctorConfirm(DoctorInfoCard *dc)
+{
+    if (!dc)
+        return;
+    m_selectedDoctor = dc; // 待确认医生（供确认槽函数读取）
+
+    if (!m_confirmPopup) {
+        // 弹窗父对象取主窗口（AppointmentPage 所在顶层窗口），复用单实例
+        m_confirmPopup = new AppointmentConfirmPopup(window());
+        // 弹窗【确认挂号】→ 本页槽函数：准备医生信息写入 CData
+        connect(m_confirmPopup, &AppointmentConfirmPopup::confirmed,
+                this, &AppointmentPage::onAppointmentConfirmed);
+    }
+
+    // 填充本次待确认医生的挂号信息
+    m_confirmPopup->setAppointmentInfo(dc->name(), dc->dept(), dc->time());
+
+    // 弹窗固定悬浮在主窗口正中央
+    QWidget *host = m_confirmPopup->parentWidget(); // 主窗口
+    const QPoint center = host ? host->rect().center()
+                               : rect().center();
+    m_confirmPopup->move(center - QPoint(m_confirmPopup->width() / 2-300,
+                                         m_confirmPopup->height() / 2));
+    m_confirmPopup->show();
+    m_confirmPopup->raise();
+}
+
+void AppointmentPage::onAppointmentConfirmed()
+{
+    if (!m_selectedDoctor) {
+        qDebug() << QStringLiteral("确认挂号：未选中医生，忽略");
+        return;
+    }
+    // 把确认挂号的医生信息保存到 CData，供后续挂号提交流程使用
+    auto id = m_selectedDoctor->id();
+    auto name = m_selectedDoctor->name();
+    auto department = m_selectedDoctor->dept();
+    auto time = m_selectedDoctor->time();
+    auto m_register_date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
+
+    qDebug().noquote() << QStringLiteral("确认挂号（医生信息已写入 CData）：id=%1 姓名=%2 科室=%3 时段=%4 日期=%5")
+                              .arg(id)
+                              .arg(name)
+                              .arg(department)
+                              .arg(time)
+                              .arg(m_register_date);
+    //发送数据
+    QByteArray send_data;
+    send_data.resize(1024);
+    HEAD head;
+    PATIENT_APPOINTMENT_REQ req;
+    head.type=SERVICE_TYPE::PATIENT_APPOINTMENT;
+    head.len=sizeof(req);
+    req.patient_id=CData::m_id;
+    req.doctor_id=id;
+    req.ob_time=time;
+
+    memcpy(send_data.data(),&head,sizeof(head));
+    memcpy(send_data.data()+sizeof(head),&req,sizeof(req));
+    emit data_ready(send_data,sizeof(head)+sizeof(req));
+
+
+
+
+
+}
+
+void AppointmentPage::hideEvent(QHideEvent *event)
+{
+    // 页面切走（隐藏）时同步收起挂号确认弹窗，避免其仍悬浮在主窗口上
+    if (m_confirmPopup && m_confirmPopup->isVisible())
+        m_confirmPopup->hide();
+    QWidget::hideEvent(event);
 }
 
 QString AppointmentPage::currentDept() const

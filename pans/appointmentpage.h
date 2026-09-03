@@ -4,9 +4,11 @@
 #include <QList>
 #include <QWidget>
 
+class AppointmentConfirmPopup;
 class DoctorInfoCard;
 class QButtonGroup;
 class QGridLayout;
+class QHideEvent;
 
 /**
  * @brief 页面2：预约挂号页（QStackedWidget 索引 2）
@@ -37,8 +39,15 @@ signals:
     void confirmRequested();// 确认预约
     void data_ready(QByteArray data, int size);
 
+protected:
+    void hideEvent(QHideEvent *event) override; // 页面隐藏时同步收起挂号确认弹窗
+
+private slots:
+    void onAppointmentConfirmed(); // 弹窗【确认挂号】触发：把选中医生的信息准备写入 CData
+
 private:
     void initLayout(); // 构建页面布局
+    void showDoctorConfirm(DoctorInfoCard *dc); // 弹出挂号确认弹窗（展示该医生挂号信息）
     QString currentDept() const;      // 当前选中的科室；未选中返回空串（不限科室）
     int currentSessionTime() const;   // 当前时段对应的 doctor_info.time；未选中返回 -1（不限时段）
 
@@ -48,7 +57,8 @@ private:
     QButtonGroup *m_sessionGroup  = nullptr;  // 时段互斥组（读取当前选中时段）
     QString       m_avatarPath;               // 医生头像路径（暂统一为测试头像）
     QList<DoctorInfoCard *> m_doctorCards;    // 当前展示的医生卡片
-    DoctorInfoCard *m_selectedDoctor = nullptr; // 当前选中的医生（供【确认预约】提交使用）
+    DoctorInfoCard *m_selectedDoctor = nullptr; // 当前选中的医生（供挂号确认提交使用）
+    AppointmentConfirmPopup *m_confirmPopup = nullptr; // 挂号确认弹窗（复用单实例）
 };
 
 #endif // APPOINTMENTPAGE_H

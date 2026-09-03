@@ -17,6 +17,7 @@ enum SERVICE_TYPE {
     PATIENT_RESIGN,
     PATIENT_LOGIN,
     PATIENT_GET_DOCTOR_INFO,
+    PATIENT_APPOINTMENT,
 
 };
 
@@ -130,7 +131,15 @@ typedef struct{
     char department[15];
 }doctor_info;
 
+typedef struct {
+    int patient_id;
+    int doctor_id;
+    int ob_time;
+}PATIENT_APPOINTMENT_REQ;
 
+typedef struct {
+    int state;
+}PATIENT_APPOINTMENT_RESP;
 
 
 

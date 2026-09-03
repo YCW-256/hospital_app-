@@ -42,6 +42,10 @@ public:
     static QWidget* current_widget;
     static vector<doctor_info_use> m_doctor_info;
 
+    //--- 确认挂号信息（预约挂号页点击弹窗【确认挂号】时写入，供后续挂号提交使用）
+    static doctor_info_use m_register_doctor; // 已确认挂号的医生信息（id/name/time/department）
+    //static QString m_register_date;           // 挂号日期（yyyy-MM-dd，服务器返回的是今日值班医生）
+
 };
 
 #endif // CDATA_H
