@@ -3,6 +3,7 @@
 #include "../audio/ttsplayer.h"
 #include "../core/iconfactory.h"
 #include "../core/uistyle.h"
+#include "../voice/speechrecognizer.h"
 #include "childs/chatbubble.h"
 #include "childs/circularavatar.h"
 
@@ -33,6 +34,13 @@ AIAssistantPopup::AIAssistantPopup(const QString &doctorAvatarPath, QWidget *par
     setAttribute(Qt::WA_TranslucentBackground, true); // 透明窗口底，实现圆角
 
     initUi();
+}
+
+AIAssistantPopup::~AIAssistantPopup()
+{
+    // 语音识别若正在进行则取消（释放麦克风 / 丢弃识别结果）
+    if (m_voiceBound)
+        SpeechRecognizer::instance()->cancelFor(this);
 }
 
 void AIAssistantPopup::initUi()
@@ -143,13 +151,13 @@ void AIAssistantPopup::initUi()
     }
     root->addLayout(quickRow);
 
-    /* ---------- 语音输入区：输入框 + 蓝色圆形搜索按钮 ---------- */
+    /* ---------- 语音输入区：输入框 + 蓝色圆形语音按钮 + 发送按钮 ---------- */
     auto *inputRow = new QHBoxLayout;
     inputRow->setContentsMargins(14, 8, 14, 16);
     inputRow->setSpacing(10);
 
     m_inputEdit = new QLineEdit(container);
-    m_inputEdit->setPlaceholderText(QStringLiteral("按住说话"));
+    m_inputEdit->setPlaceholderText(QStringLiteral("请输入问题，或按住麦克风说话"));
     m_inputEdit->setMinimumHeight(48);
     m_inputEdit->setStyleSheet(QStringLiteral(
         "QLineEdit {"
@@ -162,6 +170,21 @@ void AIAssistantPopup::initUi()
         "}"));
     connect(m_inputEdit, &QLineEdit::returnPressed, this, &AIAssistantPopup::onSend);
     inputRow->addWidget(m_inputEdit, 1);
+
+    // 语音麦克风按钮：按住开始录音，松开自动识别并直接把文字发给 AI 助手
+    m_voiceBtn = new QPushButton(container);
+    m_voiceBtn->setCursor(Qt::PointingHandCursor);
+    m_voiceBtn->setFixedSize(48, 48);
+    m_voiceBtn->setIcon(QIcon(IconFactory::renderSvg(IconFactory::micSvg(), QSize(26, 26))));
+    m_voiceBtn->setIconSize(QSize(26, 26));
+    m_voiceBtn->setToolTip(QStringLiteral("按住说话，松开自动识别并发送"));
+    m_voiceBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #2E86DE; border: none; border-radius: 24px; }"
+        "QPushButton:hover { background-color: #4A9CE8; }"
+        "QPushButton:pressed { background-color: #E81123; }"));
+    connect(m_voiceBtn, &QPushButton::pressed, this, &AIAssistantPopup::onVoicePressed);
+    connect(m_voiceBtn, &QPushButton::released, this, &AIAssistantPopup::onVoiceReleased);
+    inputRow->addWidget(m_voiceBtn);
 
     auto *sendBtn = new QPushButton(container);
     sendBtn->setCursor(Qt::PointingHandCursor);
@@ -223,12 +246,20 @@ void AIAssistantPopup::onSend()
     if (text.isEmpty())
         return;
     m_inputEdit->clear();
+    submitText(text);
+}
 
-    addMessage(text, true);
+void AIAssistantPopup::submitText(const QString &text)
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+        return;
+
+    addMessage(trimmed, true);
     addMessage(QStringLiteral("正在思考……"), false);
     QApplication::processEvents(); // 先显示"正在思考"，再发起请求
 
-    const QString reply = MyAgent::instance()->ask(text);
+    const QString reply = MyAgent::instance()->ask(trimmed);
 
     // 移除"正在思考……"气泡，再追加正式回复
     if (m_chatLayout->count() > 1) {
@@ -245,6 +276,35 @@ void AIAssistantPopup::onSend()
     MyAgent::instance()->getDecisionAndContent(outDecision, outContent);
     emit full_text(outDecision,outContent); // 发送AI决策码与内容
     qDebug()<<"传"<<outDecision<<outContent;
+}
+
+void AIAssistantPopup::onVoicePressed()
+{
+    // 首次按住麦克风时懒绑定语音识别单例的信号（此后正常按住/松开即可）
+    if (!m_voiceBound) {
+        m_voiceBound = true;
+        auto *sr = SpeechRecognizer::instance();
+        // 识别出文字 → 直接发给 AI 助手（无需再点发送按钮）
+        connect(sr, &SpeechRecognizer::recognized, this,
+                [this](QObject *requester, const QString &text) {
+                    if (requester != this)
+                        return;
+                    submitText(text);
+                });
+        // 识别出错（模型缺失 / 无麦克风 / 没录到声音等）→ 气泡提示
+        connect(sr, &SpeechRecognizer::errorOccurred, this,
+                [this](QObject *requester, const QString &message) {
+                    if (requester != this)
+                        return;
+                    addMessage(message, false);
+                });
+    }
+    SpeechRecognizer::instance()->startListening(this); // 按住：开始录音
+}
+
+void AIAssistantPopup::onVoiceReleased()
+{
+    SpeechRecognizer::instance()->stopListening(); // 松开：自动识别并直接发送
 }
 
 

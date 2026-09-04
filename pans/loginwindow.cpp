@@ -1,5 +1,6 @@
 #include "loginwindow.h"
 #include "../core/uistyle.h"
+#include "../MyTcp/cdata.h"
 #include "topnavbar.h" // CircularLogo
 
 #include <QFrame>
@@ -186,6 +187,8 @@ void LoginWindow::onLogin()
         return;
     }
     m_errorLabel->hide();
+    // 记录本次登录手机号到 CData，供个人中心页展示当前登录用户
+    CData::m_phone = phone;
     PATIENT_LOGIN_REQ req;
     req.type=1;
     MyUtils::qstringToCharArray(req.account,sizeof(req.account),phone);

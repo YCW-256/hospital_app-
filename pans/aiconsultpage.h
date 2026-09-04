@@ -24,8 +24,9 @@ class QVBoxLayout;
  *  - 右侧：白色圆角聊天窗口（深蓝标题栏：医生头像 + "AI 快速问诊" + 在线状态
  *          + 可滚动的 ChatBubble 对话气泡区）+ 蓝色【返回首页】按钮。
  *    顶部用透明占位与左侧【症状输入】标题等高，使视频区域与聊天框高度对齐。
- *  - 底部通栏：带麦克风图标的症状描述输入框（占位"请描述症状，不超过 300 字"）
- *          + 蓝色【开始问诊】按钮，回车或点击发送。
+ *  - 底部通栏：蓝色圆形语音麦克风按钮（按住说话，松手自动识别，
+ *    识别文字直接发给 AI 医生）+ 症状描述输入框（占位"请描述症状，不超过 300 字"）
+ *    + 蓝色【开始问诊】按钮，回车或点击发送。
  *
  * 问答走独立的 AI 快速问诊智能体（ConsultAgent，医疗问诊提示词 + 独立对话记忆，
  * 与个人信息助手 MyAgent 分离），AI 的欢迎语与每条回复自动语音播报
@@ -51,7 +52,11 @@ private:
 
     void addMessage(const QString &text, bool isUser); // 追加一条气泡
     void sendToAgent(const QString &userText);         // 用户消息 → ConsultAgent → TTS
+    void submitText(const QString &text);              // 统一发送入口（打字回车 / 语音识别共用）
     void onSend();                                     // 发送输入框内容（回车/按钮）
+    void onVoicePressed();                             // 按住麦克风：开始录音
+    void onVoiceReleased();                            // 松开麦克风：自动识别并直接发送
+    void onVoiceError(const QString &message);         // 语音识别错误（气泡提示）
 
     void initCamera();          // 初始化硬件摄像头（启动即连接设备）
     void refreshVideoLabel();   // 按开关状态刷新视频标签（画面铺满 / 纯黑）
@@ -63,7 +68,9 @@ private slots:
 private: // 成员
     QLabel       *m_videoLabel  = nullptr; // 视频承载 QLabel（承载硬件图像 / 纯黑）
     QPushButton  *m_toggleBtn   = nullptr; // 摄像头【打开/关闭】按钮
+    QPushButton  *m_voiceBtn    = nullptr; // 语音输入麦克风（按住说话，松手自动识别发送）
     QLineEdit    *m_inputEdit   = nullptr; // 症状描述输入框
+    bool          m_voiceBound  = false;   // 是否已绑定语音识别单例（首次按住时懒绑定）
     QScrollArea  *m_scroll      = nullptr; // 对话气泡滚动区
     QWidget      *m_chatContent = nullptr; // 气泡内容区
     QVBoxLayout  *m_chatLayout  = nullptr; // 气泡垂直布局（末尾 stretch）

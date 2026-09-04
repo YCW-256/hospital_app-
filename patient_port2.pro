@@ -1,4 +1,4 @@
-QT += core gui widgets svg network serialport
+QT += core gui widgets svg network serialport multimedia
 
 CONFIG += c++17
 
@@ -41,7 +41,10 @@ SOURCES += \
     core/iconfactory.cpp \
     core/uistyle.cpp \
     device/cameraserial.cpp \
-    device/devicecamera.cpp
+    device/devicecamera.cpp \
+    voice/audiorecorder.cpp \
+    voice/sensevoiceengine.cpp \
+    voice/speechrecognizer.cpp
 
 HEADERS += \
     MyTcp/cdata.h \
@@ -74,7 +77,10 @@ HEADERS += \
     core/iconfactory.h \
     core/uistyle.h \
     device/cameraserial.h \
-    device/devicecamera.h
+    device/devicecamera.h \
+    voice/audiorecorder.h \
+    voice/sensevoiceengine.h \
+    voice/speechrecognizer.h
 
 # 纯代码构建，不使用 .ui 文件
 
@@ -92,3 +98,27 @@ DESTDIR = $$PWD/bin
 
 RESOURCES += \
     resource.qrc
+
+# ==================== 语音识别模块（voice/） ====================
+# Sherpa-ONNX C API 头文件目录（c-api.h / cargs.h，sensevoiceengine.cpp 内 extern "C" 引入）
+INCLUDEPATH += $$PWD/voice/sherpa/include
+
+# 链接预编译库 sherpa-onnx-c-api（voice/sherpa/lib，MSVC 导入库 .lib；
+# Qt 的 llvm-mingw 工具链使用 lld，可直接链接 MSVC 导入库）
+LIBS += $$PWD/voice/sherpa/lib/sherpa-onnx-c-api.lib
+
+# 把 SenseVoice 模型目录（编译期默认 voice/model）传给 C++，运行期不再手填路径
+DEFINES += VOICE_MODEL_DIR=\\\"$$PWD/voice/model\\\"
+
+win32 {
+    # 语音识别运行所需 DLL（构建后逐个复制到 exe 输出目录，避免运行时报缺失 DLL）
+    VOICE_DLLS = \
+        $$PWD/voice/sherpa/lib/sherpa-onnx-c-api.dll \
+        $$PWD/voice/sherpa/lib/onnxruntime.dll \
+        $$PWD/voice/sherpa/lib/onnxruntime_providers_shared.dll \
+        $$PWD/voice/sherpa/lib/cargs.dll
+
+    for(dll, VOICE_DLLS) {
+        QMAKE_POST_LINK += $$escape_expand(\n\t)$$QMAKE_COPY $$shell_path($$dll) $$shell_path($$DESTDIR)
+    }
+}

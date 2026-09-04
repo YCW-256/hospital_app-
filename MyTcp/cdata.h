@@ -39,6 +39,7 @@ public:
     static int current_height;
     static int m_id;
     static QString m_name;
+    static QString m_phone;   // 当前登录用户的手机号码（登录时写入，供个人中心等展示）
     static QWidget* current_widget;
     static vector<doctor_info_use> m_doctor_info;
 

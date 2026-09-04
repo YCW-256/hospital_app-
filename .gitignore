@@ -14,3 +14,6 @@ Build/
 *.obj
 *.o
 *.moc
+
+# 语音识别模型体积大（约 239MB），不入库；sherpa 头/库/DLL 仍需提交以便构建
+voice/model/

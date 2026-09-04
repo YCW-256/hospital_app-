@@ -12,6 +12,7 @@ int CData::current_width=500;
 int CData::current_height=200;
 int CData::m_id=-1;
 QString CData::m_name;
+QString CData::m_phone;
 QWidget* CData::current_widget=nullptr;
 vector<doctor_info_use> CData::m_doctor_info{};
 doctor_info_use CData::m_register_doctor{};

@@ -5,6 +5,7 @@
 #include "../core/uistyle.h"
 #include "../device/cameraserial.h"
 #include "../device/devicecamera.h"
+#include "../voice/speechrecognizer.h"
 #include "childs/chatbubble.h"
 #include "childs/circularavatar.h"
 
@@ -307,15 +308,27 @@ QWidget *AIConsultPage::createBottomBar()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(20);
 
-    // 左侧症状描述输入框：麦克风图标 + 占位提示，上限 300 字
+    // 语音输入麦克风按钮：按住开始录音，松开自动识别并直接把文字发给 AI 医生
+    m_voiceBtn = new QPushButton(bar);
+    m_voiceBtn->setCursor(Qt::PointingHandCursor);
+    m_voiceBtn->setFixedSize(60, 60);
+    m_voiceBtn->setIcon(QIcon(IconFactory::renderSvg(IconFactory::micSvg(), QSize(32, 32))));
+    m_voiceBtn->setIconSize(QSize(32, 32));
+    m_voiceBtn->setToolTip(QStringLiteral("按住说话，松开自动识别并发送"));
+    m_voiceBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #2E86DE; border: none; border-radius: 30px; }"
+        "QPushButton:hover { background-color: #4A9CE8; }"
+        "QPushButton:pressed { background-color: #E81123; }"));
+    connect(m_voiceBtn, &QPushButton::pressed, this, &AIConsultPage::onVoicePressed);
+    connect(m_voiceBtn, &QPushButton::released, this, &AIConsultPage::onVoiceReleased);
+    layout->addWidget(m_voiceBtn);
+
+    // 症状描述输入框：占位提示，上限 300 字
     m_inputEdit = new QLineEdit(bar);
     m_inputEdit->setPlaceholderText(QStringLiteral("请描述症状，不超过 300 字"));
     m_inputEdit->setMaxLength(300);
     m_inputEdit->setClearButtonEnabled(true);
     m_inputEdit->setFixedHeight(60);
-    m_inputEdit->addAction(
-        QIcon(IconFactory::renderSvg(IconFactory::micBlueSvg(), QSize(28, 28))),
-        QLineEdit::LeadingPosition);
     m_inputEdit->setStyleSheet(QStringLiteral(
         "QLineEdit {"
         "    background-color: #FFFFFF;"
@@ -380,12 +393,58 @@ void AIConsultPage::onSend()
     if (text.isEmpty())
         return;
     m_inputEdit->clear();
-    emit consultRequested(text);
-    sendToAgent(text);
+    submitText(text);
+}
+
+void AIConsultPage::submitText(const QString &text)
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+        return;
+    emit consultRequested(trimmed);
+    sendToAgent(trimmed);
+}
+
+void AIConsultPage::onVoicePressed()
+{
+    // 首次按住麦克风时懒绑定语音识别单例的信号（此后正常按住/松开即可）
+    if (!m_voiceBound) {
+        m_voiceBound = true;
+        auto *sr = SpeechRecognizer::instance();
+        // 识别出文字 → 直接作为一条用户消息发给 AI 医生（无需点【开始问诊】）
+        connect(sr, &SpeechRecognizer::recognized, this,
+                [this](QObject *requester, const QString &text) {
+                    if (requester != this)
+                        return;
+                    submitText(text);
+                });
+        // 识别出错（模型缺失 / 无麦克风 / 没录到声音等）→ 气泡提示
+        connect(sr, &SpeechRecognizer::errorOccurred, this,
+                [this](QObject *requester, const QString &message) {
+                    if (requester != this)
+                        return;
+                    onVoiceError(message);
+                });
+    }
+    SpeechRecognizer::instance()->startListening(this); // 按住：开始录音
+}
+
+void AIConsultPage::onVoiceReleased()
+{
+    SpeechRecognizer::instance()->stopListening(); // 松开：自动识别并直接发送
+}
+
+void AIConsultPage::onVoiceError(const QString &message)
+{
+    addMessage(message, false); // 以一条 AI 侧气泡展示提示（不做语音播报）
 }
 
 AIConsultPage::~AIConsultPage()
 {
+    // 语音识别若正在进行则取消（释放麦克风 / 丢弃结果）
+    if (m_voiceBound)
+        SpeechRecognizer::instance()->cancelFor(this);
+
     // 安全停止摄像头串口线程：先跨线程执行 stop，再退出事件循环
     if (m_serialThread) {
         if (m_serialCtl && m_serialThread->isRunning()) {
