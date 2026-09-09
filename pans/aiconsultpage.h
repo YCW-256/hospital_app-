@@ -64,10 +64,15 @@ private:
 private slots:
     void onCameraFrame(const QImage &frame); // 收到硬件上传图像帧
     void onToggleCamera(bool checked);       // 【打开/关闭】按钮切换
+    void onDetectTongue();                   // 【舌苔检测】点击：跨线程下发 0x0010 触发单帧检测
+    void onResumeVideo();                    // 【再次检测】点击：跨线程下发 0x0001 恢复实时推流
+    void onTongueDetected(int classId, float confidence); // 收到舌苔上行帧：qDebug 打印结果
 
 private: // 成员
     QLabel       *m_videoLabel  = nullptr; // 视频承载 QLabel（承载硬件图像 / 纯黑）
     QPushButton  *m_toggleBtn   = nullptr; // 摄像头【打开/关闭】按钮
+    QPushButton  *m_detectBtn   = nullptr; // 【舌苔检测】按钮（下发 0x0010 触发单帧检测）
+    QPushButton  *m_resumeBtn   = nullptr; // 【再次检测】按钮（下发 0x0001 恢复实时推流）
     QPushButton  *m_voiceBtn    = nullptr; // 语音输入麦克风（按住说话，松手自动识别发送）
     QLineEdit    *m_inputEdit   = nullptr; // 症状描述输入框
     bool          m_voiceBound  = false;   // 是否已绑定语音识别单例（首次按住时懒绑定）

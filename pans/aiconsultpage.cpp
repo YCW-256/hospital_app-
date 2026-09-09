@@ -174,6 +174,42 @@ QWidget *AIConsultPage::createLeftArea()
         "QPushButton#cameraToggleBtn:checked:hover { background-color: #4A9CE8; }"));
     connect(m_toggleBtn, &QPushButton::toggled, this, &AIConsultPage::onToggleCamera);
     ctrlRow->addWidget(m_toggleBtn);
+
+    // 舌苔检测按钮：点击下发 0x0010 触发单帧推理，设备检测到舌苔即上行回报
+    m_detectBtn = new QPushButton(QStringLiteral("舌苔检测"), videoCard);
+    m_detectBtn->setObjectName(QStringLiteral("cameraDetectBtn"));
+    m_detectBtn->setCursor(Qt::PointingHandCursor);
+    m_detectBtn->setFixedSize(120, 40);
+    m_detectBtn->setStyleSheet(QStringLiteral(
+        "QPushButton#cameraDetectBtn {"
+        "    color: #FFFFFF;"
+        "    background-color: #2A8A6A;"
+        "    border: none;"
+        "    border-radius: 20px;"
+        "    font-size: 15px;"
+        "    font-weight: bold;"
+        "}"
+        "QPushButton#cameraDetectBtn:hover { background-color: #33A37E; }"));
+    connect(m_detectBtn, &QPushButton::clicked, this, &AIConsultPage::onDetectTongue);
+    ctrlRow->addWidget(m_detectBtn);
+
+    // 再次检测按钮：检测成功后画面冻结（设备单帧推理后自动停止推流），点击下发 0x0001 恢复实时画面
+    m_resumeBtn = new QPushButton(QStringLiteral("再次检测"), videoCard);
+    m_resumeBtn->setObjectName(QStringLiteral("cameraResumeBtn"));
+    m_resumeBtn->setCursor(Qt::PointingHandCursor);
+    m_resumeBtn->setFixedSize(120, 40);
+    m_resumeBtn->setStyleSheet(QStringLiteral(
+        "QPushButton#cameraResumeBtn {"
+        "    color: #FFFFFF;"
+        "    background-color: #E67E22;"
+        "    border: none;"
+        "    border-radius: 20px;"
+        "    font-size: 15px;"
+        "    font-weight: bold;"
+        "}"
+        "QPushButton#cameraResumeBtn:hover { background-color: #F39C12; }"));
+    connect(m_resumeBtn, &QPushButton::clicked, this, &AIConsultPage::onResumeVideo);
+    ctrlRow->addWidget(m_resumeBtn);
     videoLayout->addLayout(ctrlRow);
 
     // 画面承载 QLabel：默认纯黑；【打开】后铺满显示硬件上传图像（onCameraFrame 更新）
@@ -487,6 +523,8 @@ void AIConsultPage::initCamera()
     connect(m_serialThread, &QThread::started, m_serialCtl, &CameraSerial::start);
     connect(m_serialCtl, &CameraSerial::logMessage, this,
             [](const QString &msg) { qDebug().noquote() << msg; });
+    // 串口线程解析出舌苔检测上行帧 → 主线程槽里 qDebug 打印结果
+    connect(m_serialCtl, &CameraSerial::tongueDetected, this, &AIConsultPage::onTongueDetected);
     m_serialThread->start();
 
     // 网络接收器：接收摄像头经 TCP 推来的图像帧（初始化即连接设备）
@@ -515,6 +553,47 @@ void AIConsultPage::onToggleCamera(bool checked)
     refreshVideoLabel();
     qDebug().noquote() << (checked ? QStringLiteral("[摄像头] 画面已打开")
                                    : QStringLiteral("[摄像头] 画面已关闭，显示纯黑"));
+}
+
+void AIConsultPage::onDetectTongue()
+{
+    if (!m_serialCtl) {
+        qDebug().noquote() << QStringLiteral("[舌苔检测] 串口控制器未初始化");
+        return;
+    }
+    // 跨线程投递到串口工作线程执行（QSerialPort 归其所有线程，不能直接调用）
+    QMetaObject::invokeMethod(m_serialCtl, "triggerTongueDetect", Qt::QueuedConnection);
+    qDebug().noquote() << QStringLiteral("[舌苔检测] 已触发单帧舌苔检测（下发 0x0010），"
+                                         "检测到舌苔后设备将自动上行回报…");
+}
+
+void AIConsultPage::onResumeVideo()
+{
+    if (!m_serialCtl) {
+        qDebug().noquote() << QStringLiteral("[舌苔检测] 串口控制器未初始化");
+        return;
+    }
+    // 跨线程投递：下发 0x0001，让设备恢复实时推流，解除检测后的冻结画面
+    QMetaObject::invokeMethod(m_serialCtl, "resumeVideo", Qt::QueuedConnection);
+    qDebug().noquote() << QStringLiteral("[舌苔检测] 已请求恢复实时预览（下发 0x0001），"
+                                         "可再次点击【舌苔检测】采集舌苔…");
+}
+
+void AIConsultPage::onTongueDetected(int classId, float confidence)
+{
+    // 类别编码→舌苔名称，须与设备端模型 labels.txt / GetTongueClassCode 的顺序一致
+    static const char *kTongueNames[] = {
+        "灰黑苔", "镜面舌", "薄白苔", "白腻苔", "黄腻苔", // cls 0~4
+    };
+    const int nameCount = static_cast<int>(sizeof(kTongueNames) / sizeof(kTongueNames[0]));
+    const QString name = (classId >= 0 && classId < nameCount)
+                             ? QString::fromUtf8(kTongueNames[classId])
+                             : QStringLiteral("未识别(0x%1)").arg(classId, 2, 16, QLatin1Char('0'));
+
+    qDebug().noquote() << QStringLiteral("[舌苔检测] 类别=%1(编码%2)  置信度=%3%")
+                              .arg(name)
+                              .arg(classId)
+                              .arg(QString::number(confidence * 100.0f, 'f', 1));
 }
 
 void AIConsultPage::refreshVideoLabel()
