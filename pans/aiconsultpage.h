@@ -66,7 +66,7 @@ private slots:
     void onToggleCamera(bool checked);       // 【打开/关闭】按钮切换
     void onDetectTongue();                   // 【舌苔检测】点击：跨线程下发 0x0010 触发单帧检测
     void onResumeVideo();                    // 【再次检测】点击：跨线程下发 0x0001 恢复实时推流
-    void onTongueDetected(int classId, float confidence); // 收到舌苔上行帧：qDebug 打印结果
+    void onTongueDetected(int classId, float confidence); // 收到舌苔上行帧：打印结果并交给 AI 医生给建议
 
 private: // 成员
     QLabel       *m_videoLabel  = nullptr; // 视频承载 QLabel（承载硬件图像 / 纯黑）

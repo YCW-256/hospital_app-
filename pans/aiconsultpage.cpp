@@ -594,6 +594,15 @@ void AIConsultPage::onTongueDetected(int classId, float confidence)
                               .arg(name)
                               .arg(classId)
                               .arg(QString::number(confidence * 100.0f, 'f', 1));
+
+    // 未识别（编码越界，设备端 0xFF）时不打扰 AI，仅打印日志
+    if (classId < 0 || classId >= nameCount)
+        return;
+
+    // 检测成功：把结果作为一条用户消息发给 AI 医生，请其给出调理建议
+    // （走统一发送入口，与打字 / 语音识别共用发送逻辑，AI 回复自动语音播报）
+    const QString ask = QStringLiteral("通过边缘模型检测用户的舌头为%1，请你给出建议").arg(name);
+    submitText(ask);
 }
 
 void AIConsultPage::refreshVideoLabel()
