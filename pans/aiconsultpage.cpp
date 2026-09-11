@@ -10,6 +10,7 @@
 #include "childs/circularavatar.h"
 
 #include <QApplication>
+#include <QBuffer>
 #include <QButtonGroup>
 #include <QDebug>
 #include <QFrame>
@@ -21,6 +22,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QProgressBar>          // ★ 新增
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -39,7 +41,7 @@ QPushButton *createSymptomButton(const QString &text, const QPixmap &icon, QWidg
 {
     auto *btn = new QPushButton(text, parent);
     btn->setCursor(Qt::PointingHandCursor);
-    btn->setCheckable(true);           // 可选中，配合 QButtonGroup 互斥
+    btn->setCheckable(true);
     btn->setFixedHeight(kBottomRowHeight);
     btn->setIcon(QIcon(icon));
     btn->setIconSize(QSize(36, 36));
@@ -63,10 +65,60 @@ QPushButton *createSymptomButton(const QString &text, const QPixmap &icon, QWidg
     return btn;
 }
 
-/* 视频画面圆角半径：与 QLabel#videoLabel 样式保持一致 */
+/* 视频画面圆角半径 */
 const int kVideoLabelRadius = 16;
 
-/* 生成"铺满且不变形"的画面位图：等比放大、居中裁剪，圆角之外透明以露出纯黑底 */
+/* 【上传】按钮输出图片的边长 */
+const int kUploadImageSize = 640;
+
+/* 把画面做成上传用的 640×640 正方形图片 */
+QImage makeUploadImage(const QImage &frame)
+{
+    QImage out(kUploadImageSize, kUploadImageSize, QImage::Format_RGB888);
+    out.fill(Qt::black);
+    if (frame.isNull())
+        return out;
+
+    QImage src = frame.convertToFormat(QImage::Format_RGB888);
+    src = src.scaled(kUploadImageSize, kUploadImageSize,
+                     Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+
+    QPainter painter(&out);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.drawImage((kUploadImageSize - src.width()) / 2,
+                      (kUploadImageSize - src.height()) / 2, src);
+    return out;
+}
+
+/* 把图片编码为字节流 */
+QByteArray saveToBytes(const QImage &image, const char *format, int quality)
+{
+    QByteArray data;
+    QBuffer buffer(&data);
+    if (!buffer.open(QIODevice::WriteOnly))
+        return QByteArray();
+    if (!image.save(&buffer, format, quality))
+        return QByteArray();
+    buffer.close();
+    return data;
+}
+
+/* 编码上传图片：优先 JPEG，回退 PNG */
+QByteArray encodeUploadImage(const QImage &image, QString *formatOut)
+{
+    QByteArray data = saveToBytes(image, "JPEG", 90);
+    if (!data.isEmpty()) {
+        if (formatOut)
+            *formatOut = QStringLiteral("JPEG");
+        return data;
+    }
+    data = saveToBytes(image, "PNG", -1);
+    if (formatOut)
+        *formatOut = data.isEmpty() ? QStringLiteral("未知") : QStringLiteral("PNG");
+    return data;
+}
+
+/* 生成"铺满且不变形"的画面位图 */
 QPixmap makeCoverPixmap(const QImage &frame, const QSize &target)
 {
     QPixmap cover(target);
@@ -96,14 +148,11 @@ AIConsultPage::AIConsultPage(QWidget *parent)
     , m_userAvatar(UIStyle::resolveImagePath(QStringLiteral("icons/user.png")))
 {
     initLayout();
-    initCamera(); // 初始化即连接舌苔检测摄像头（TCP 接收图像）
+    initCamera();
 
-    // 初始欢迎气泡 + 语音播报
     const QString welcome = QStringLiteral("您好，我是AI快速问诊医生，请选择或输入您的主要症状，"
                                            "我将为您做初步问诊分析。");
     addMessage(welcome, false);
-    // 播报延迟到事件循环启动后执行：SAPI 语音播放依赖消息泵，
-    // 若在 QApplication::exec() 启动前（如 MainWindow 构造期）调用会阻塞导致窗口无法显示
     QTimer::singleShot(0, this, [welcome] {
         TtsPlayer::instance()->speak(welcome);
     });
@@ -111,19 +160,17 @@ AIConsultPage::AIConsultPage(QWidget *parent)
 
 void AIConsultPage::initLayout()
 {
-    UIStyle::styleTransparentPage(this); // 透出主窗口蓝色渐变
+    UIStyle::styleTransparentPage(this);
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(64, 36, 64, 30);
     root->setSpacing(24);
 
-    // 主区域：左侧视频 + 症状按钮，右侧聊天窗口
     auto *bodyRow = new QHBoxLayout;
     bodyRow->setSpacing(30);
     bodyRow->addWidget(createLeftArea(), 5);
     bodyRow->addWidget(createRightArea(), 4);
     root->addLayout(bodyRow, 1);
 
-    // 底部通栏输入区
     root->addWidget(createBottomBar());
 }
 
@@ -134,7 +181,7 @@ QWidget *AIConsultPage::createLeftArea()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(16);
 
-    // ---------- 白色圆角视频卡片：舌苔检测摄像头画面（纯代码，不依赖 multimedia 模块）----------
+    // ---------- 白色圆角视频卡片 ----------
     auto *videoCard = new QWidget(left);
     UIStyle::styleCard(videoCard);
     layout->addWidget(videoCard, 1);
@@ -143,7 +190,7 @@ QWidget *AIConsultPage::createLeftArea()
     videoLayout->setContentsMargins(12, 12, 12, 12);
     videoLayout->setSpacing(10);
 
-    // 顶部一行：摄像头提示文字 + 【打开/关闭】显示开关
+    // 顶部一行
     auto *ctrlRow = new QHBoxLayout;
     ctrlRow->setSpacing(10);
     auto *hintLabel = new QLabel(QStringLiteral("舌苔摄像头"), videoCard);
@@ -157,9 +204,9 @@ QWidget *AIConsultPage::createLeftArea()
 
     m_toggleBtn = new QPushButton(QStringLiteral("打开"), videoCard);
     m_toggleBtn->setObjectName(QStringLiteral("cameraToggleBtn"));
-    m_toggleBtn->setCheckable(true);   // 勾选=正在显示画面
+    m_toggleBtn->setCheckable(true);
     m_toggleBtn->setCursor(Qt::PointingHandCursor);
-    m_toggleBtn->setFixedSize(120, 40);
+    m_toggleBtn->setFixedSize(110, 40);
     m_toggleBtn->setStyleSheet(QStringLiteral(
         "QPushButton#cameraToggleBtn {"
         "    color: #FFFFFF;"
@@ -175,11 +222,10 @@ QWidget *AIConsultPage::createLeftArea()
     connect(m_toggleBtn, &QPushButton::toggled, this, &AIConsultPage::onToggleCamera);
     ctrlRow->addWidget(m_toggleBtn);
 
-    // 舌苔检测按钮：点击下发 0x0010 触发单帧推理，设备检测到舌苔即上行回报
     m_detectBtn = new QPushButton(QStringLiteral("舌苔检测"), videoCard);
     m_detectBtn->setObjectName(QStringLiteral("cameraDetectBtn"));
     m_detectBtn->setCursor(Qt::PointingHandCursor);
-    m_detectBtn->setFixedSize(120, 40);
+    m_detectBtn->setFixedSize(110, 40);
     m_detectBtn->setStyleSheet(QStringLiteral(
         "QPushButton#cameraDetectBtn {"
         "    color: #FFFFFF;"
@@ -193,11 +239,10 @@ QWidget *AIConsultPage::createLeftArea()
     connect(m_detectBtn, &QPushButton::clicked, this, &AIConsultPage::onDetectTongue);
     ctrlRow->addWidget(m_detectBtn);
 
-    // 再次检测按钮：检测成功后画面冻结（设备单帧推理后自动停止推流），点击下发 0x0001 恢复实时画面
     m_resumeBtn = new QPushButton(QStringLiteral("再次检测"), videoCard);
     m_resumeBtn->setObjectName(QStringLiteral("cameraResumeBtn"));
     m_resumeBtn->setCursor(Qt::PointingHandCursor);
-    m_resumeBtn->setFixedSize(120, 40);
+    m_resumeBtn->setFixedSize(110, 40);
     m_resumeBtn->setStyleSheet(QStringLiteral(
         "QPushButton#cameraResumeBtn {"
         "    color: #FFFFFF;"
@@ -210,9 +255,26 @@ QWidget *AIConsultPage::createLeftArea()
         "QPushButton#cameraResumeBtn:hover { background-color: #F39C12; }"));
     connect(m_resumeBtn, &QPushButton::clicked, this, &AIConsultPage::onResumeVideo);
     ctrlRow->addWidget(m_resumeBtn);
+
+    m_uploadBtn = new QPushButton(QStringLiteral("上传"), videoCard);
+    m_uploadBtn->setObjectName(QStringLiteral("cameraUploadBtn"));
+    m_uploadBtn->setCursor(Qt::PointingHandCursor);
+    m_uploadBtn->setFixedSize(110, 40);
+    m_uploadBtn->setToolTip(QStringLiteral("把当前画面缩放为 640×640 后上传"));
+    m_uploadBtn->setStyleSheet(QStringLiteral(
+        "QPushButton#cameraUploadBtn {"
+        "    color: #FFFFFF;"
+        "    background-color: #8E44AD;"
+        "    border: none;"
+        "    border-radius: 20px;"
+        "    font-size: 15px;"
+        "    font-weight: bold;"
+        "}"
+        "QPushButton#cameraUploadBtn:hover { background-color: #9B59B6; }"));
+    connect(m_uploadBtn, &QPushButton::clicked, this, &AIConsultPage::onUploadImage);
+    ctrlRow->addWidget(m_uploadBtn);
     videoLayout->addLayout(ctrlRow);
 
-    // 画面承载 QLabel：默认纯黑；【打开】后铺满显示硬件上传图像（onCameraFrame 更新）
     m_videoLabel = new QLabel(videoCard);
     m_videoLabel->setObjectName(QStringLiteral("videoLabel"));
     m_videoLabel->setAlignment(Qt::AlignCenter);
@@ -225,7 +287,32 @@ QWidget *AIConsultPage::createLeftArea()
         "}"));
     videoLayout->addWidget(m_videoLabel, 1);
 
-    // ---------- 底部：常见症状快捷按钮（单行 4 个，与右侧【返回首页】同一行） ----------
+    // ★ 新增：浮层进度条 —— 直接挂在 videoCard 上，不进任何布局，不挤压控件
+    m_progressBar = new QProgressBar(videoCard);
+    m_progressBar->setRange(0, 100);
+    m_progressBar->setValue(0);
+    m_progressBar->setTextVisible(true);
+    m_progressBar->setFormat(QStringLiteral("%p%"));
+    m_progressBar->setStyleSheet(QStringLiteral(
+        "QProgressBar {"
+        "    background-color: rgba(255, 255, 255, 220);"
+        "    border: 1px solid #2E86DE;"
+        "    border-radius: 12px;"
+        "    color: #1F4E79;"
+        "    font-size: 13px;"
+        "    font-weight: bold;"
+        "    text-align: center;"
+        "}"
+        "QProgressBar::chunk {"
+        "    background-color: #2E86DE;"
+        "    border-radius: 11px;"
+        "}"));
+    m_progressBar->setFixedSize(360, 26);
+    m_progressBar->move(240, 260);         // 固定在 videoCard 左上角 (20, 20)
+    m_progressBar->setVisible(false);
+    m_progressBar->raise();
+
+    // ---------- 底部：常见症状快捷按钮 ----------
     const QStringList symptomNames = {
         QStringLiteral("发热咳嗽"), QStringLiteral("肠胃不适"),
         QStringLiteral("皮肤问题"), QStringLiteral("舌苔健康"),
@@ -240,12 +327,11 @@ QWidget *AIConsultPage::createLeftArea()
     auto *symptomRow = new QHBoxLayout;
     symptomRow->setSpacing(14);
     auto *group = new QButtonGroup(this);
-    group->setExclusive(true); // 症状单选，同一时间只选一种
+    group->setExclusive(true);
     for (int i = 0; i < symptomNames.size(); ++i) {
         auto *btn = createSymptomButton(symptomNames.at(i), symptomIcons.at(i), left);
         group->addButton(btn, i);
 
-        // 点击即作为一条用户消息发给 AI 医生
         connect(btn, &QPushButton::clicked, this, [this, symptomNames, i] {
             qDebug().noquote() << QStringLiteral("选择症状：%1").arg(symptomNames.at(i));
             sendToAgent(symptomNames.at(i));
@@ -264,7 +350,6 @@ QWidget *AIConsultPage::createRightArea()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(16);
 
-    // ---------- 白色圆角聊天窗口 ----------
     auto *chatCard = new QWidget(right);
     UIStyle::styleCard(chatCard);
     layout->addWidget(chatCard, 1);
@@ -273,7 +358,6 @@ QWidget *AIConsultPage::createRightArea()
     cardLayout->setContentsMargins(0, 0, 0, 0);
     cardLayout->setSpacing(0);
 
-    // 标题栏：深蓝底 + 医生头像 + 标题 + 在线状态
     auto *header = new QWidget(chatCard);
     header->setFixedHeight(64);
     header->setStyleSheet(QStringLiteral(
@@ -301,7 +385,6 @@ QWidget *AIConsultPage::createRightArea()
     headerLayout->addStretch(1);
     cardLayout->addWidget(header);
 
-    // 对话气泡滚动区（浅灰底）
     m_scroll = new QScrollArea(chatCard);
     m_scroll->setWidgetResizable(true);
     m_scroll->setFrameShape(QFrame::NoFrame);
@@ -324,11 +407,10 @@ QWidget *AIConsultPage::createRightArea()
     m_chatLayout->setContentsMargins(12, 14, 12, 14);
     m_chatLayout->setSpacing(10);
     m_chatLayout->setAlignment(Qt::AlignTop);
-    m_chatLayout->addStretch(1); // 气泡靠上，新气泡插在 stretch 之前
+    m_chatLayout->addStretch(1);
     m_scroll->setWidget(m_chatContent);
     cardLayout->addWidget(m_scroll, 1);
 
-    // 聊天窗口下方的【返回首页】按钮（与左侧症状按钮行等高）
     auto *backBtn = UIStyle::createPrimaryButton(QStringLiteral("返回首页"), right);
     backBtn->setFixedSize(220, kBottomRowHeight);
     connect(backBtn, &QPushButton::clicked, this, &AIConsultPage::backRequested);
@@ -344,7 +426,6 @@ QWidget *AIConsultPage::createBottomBar()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(20);
 
-    // 语音输入麦克风按钮：按住开始录音，松开自动识别并直接把文字发给 AI 医生
     m_voiceBtn = new QPushButton(bar);
     m_voiceBtn->setCursor(Qt::PointingHandCursor);
     m_voiceBtn->setFixedSize(60, 60);
@@ -359,7 +440,6 @@ QWidget *AIConsultPage::createBottomBar()
     connect(m_voiceBtn, &QPushButton::released, this, &AIConsultPage::onVoiceReleased);
     layout->addWidget(m_voiceBtn);
 
-    // 症状描述输入框：占位提示，上限 300 字
     m_inputEdit = new QLineEdit(bar);
     m_inputEdit->setPlaceholderText(QStringLiteral("请描述症状，不超过 300 字"));
     m_inputEdit->setMaxLength(300);
@@ -381,7 +461,6 @@ QWidget *AIConsultPage::createBottomBar()
     connect(m_inputEdit, &QLineEdit::returnPressed, this, &AIConsultPage::onSend);
     layout->addWidget(m_inputEdit, 1);
 
-    // 右侧蓝色圆角【开始问诊】按钮
     auto *consultBtn = UIStyle::createPrimaryButton(QStringLiteral("开始问诊"), bar);
     consultBtn->setFixedSize(200, 60);
     connect(consultBtn, &QPushButton::clicked, this, &AIConsultPage::onSend);
@@ -394,9 +473,8 @@ void AIConsultPage::addMessage(const QString &text, bool isUser)
 {
     const QString avatar = isUser ? m_userAvatar : m_doctorAvatar;
     auto *bubble = new ChatBubble(text, isUser, avatar, m_chatContent);
-    m_chatLayout->insertWidget(m_chatLayout->count() - 1, bubble); // 插到末尾 stretch 之前
+    m_chatLayout->insertWidget(m_chatLayout->count() - 1, bubble);
 
-    // 等布局更新后滚动到底部
     QTimer::singleShot(0, m_scroll, [this] {
         m_scroll->verticalScrollBar()->setValue(m_scroll->verticalScrollBar()->maximum());
     });
@@ -406,12 +484,10 @@ void AIConsultPage::sendToAgent(const QString &userText)
 {
     addMessage(userText, true);
     addMessage(QStringLiteral("正在思考……"), false);
-    QApplication::processEvents(); // 先显示"正在思考"，再发起请求
+    QApplication::processEvents();
 
-    // 走独立的 AI 快速问诊智能体（ConsultAgent，医疗问诊提示词 + 独立对话记忆）
     const QString reply = ConsultAgent::instance()->ask(userText);
 
-    // 移除"正在思考……"气泡，再追加正式回复
     if (m_chatLayout->count() > 1) {
         QLayoutItem *last = m_chatLayout->takeAt(m_chatLayout->count() - 2);
         if (last) {
@@ -420,7 +496,7 @@ void AIConsultPage::sendToAgent(const QString &userText)
         }
     }
     addMessage(reply, false);
-    TtsPlayer::instance()->speak(reply); // AI 回复自动语音播报
+    TtsPlayer::instance()->speak(reply);
 }
 
 void AIConsultPage::onSend()
@@ -443,18 +519,15 @@ void AIConsultPage::submitText(const QString &text)
 
 void AIConsultPage::onVoicePressed()
 {
-    // 首次按住麦克风时懒绑定语音识别单例的信号（此后正常按住/松开即可）
     if (!m_voiceBound) {
         m_voiceBound = true;
         auto *sr = SpeechRecognizer::instance();
-        // 识别出文字 → 直接作为一条用户消息发给 AI 医生（无需点【开始问诊】）
         connect(sr, &SpeechRecognizer::recognized, this,
                 [this](QObject *requester, const QString &text) {
                     if (requester != this)
                         return;
                     submitText(text);
                 });
-        // 识别出错（模型缺失 / 无麦克风 / 没录到声音等）→ 气泡提示
         connect(sr, &SpeechRecognizer::errorOccurred, this,
                 [this](QObject *requester, const QString &message) {
                     if (requester != this)
@@ -462,26 +535,24 @@ void AIConsultPage::onVoicePressed()
                     onVoiceError(message);
                 });
     }
-    SpeechRecognizer::instance()->startListening(this); // 按住：开始录音
+    SpeechRecognizer::instance()->startListening(this);
 }
 
 void AIConsultPage::onVoiceReleased()
 {
-    SpeechRecognizer::instance()->stopListening(); // 松开：自动识别并直接发送
+    SpeechRecognizer::instance()->stopListening();
 }
 
 void AIConsultPage::onVoiceError(const QString &message)
 {
-    addMessage(message, false); // 以一条 AI 侧气泡展示提示（不做语音播报）
+    addMessage(message, false);
 }
 
 AIConsultPage::~AIConsultPage()
 {
-    // 语音识别若正在进行则取消（释放麦克风 / 丢弃结果）
     if (m_voiceBound)
         SpeechRecognizer::instance()->cancelFor(this);
 
-    // 安全停止摄像头串口线程：先跨线程执行 stop，再退出事件循环
     if (m_serialThread) {
         if (m_serialCtl && m_serialThread->isRunning()) {
             QMetaObject::invokeMethod(m_serialCtl, "stop", Qt::BlockingQueuedConnection);
@@ -493,14 +564,12 @@ AIConsultPage::~AIConsultPage()
         delete m_serialThread;
         m_serialThread = nullptr;
     }
-    // 安全停止摄像头网络线程：先跨线程执行 stop（关闭 socket + 关闭自动重连），再退出事件循环
     if (m_cameraThread) {
         if (m_camera && m_cameraThread->isRunning()) {
             QMetaObject::invokeMethod(m_camera, "stop", Qt::BlockingQueuedConnection);
             m_cameraThread->quit();
             m_cameraThread->wait();
         }
-        // 线程已停，直接在持有线程释放两个对象
         delete m_camera;
         m_camera = nullptr;
         delete m_cameraThread;
@@ -510,24 +579,20 @@ AIConsultPage::~AIConsultPage()
 
 void AIConsultPage::initCamera()
 {
-    // 硬件默认参数取自参考上位机 rv1106_test01 的 ui 预设，此处写死
     const QString cameraHost = QStringLiteral("10.1.1.144");
     const quint16 cameraPort = 6868;
-    const QString serialPort = QStringLiteral("COM9"); // 用户实际使用的串口号
+    const QString serialPort = QStringLiteral("COM9");
     const qint32  serialBaud = 115200;
 
-    // 串口控制器：打开 COM9 成功后自动下发 0x0001，让摄像头开始推视频
     m_serialCtl = new CameraSerial(serialPort, serialBaud);
     m_serialThread = new QThread;
     m_serialCtl->moveToThread(m_serialThread);
     connect(m_serialThread, &QThread::started, m_serialCtl, &CameraSerial::start);
     connect(m_serialCtl, &CameraSerial::logMessage, this,
             [](const QString &msg) { qDebug().noquote() << msg; });
-    // 串口线程解析出舌苔检测上行帧 → 主线程槽里 qDebug 打印结果
     connect(m_serialCtl, &CameraSerial::tongueDetected, this, &AIConsultPage::onTongueDetected);
     m_serialThread->start();
 
-    // 网络接收器：接收摄像头经 TCP 推来的图像帧（初始化即连接设备）
     m_camera = new DeviceCamera(cameraHost, cameraPort);
     m_cameraThread = new QThread;
     m_camera->moveToThread(m_cameraThread);
@@ -540,7 +605,6 @@ void AIConsultPage::initCamera()
 
 void AIConsultPage::onCameraFrame(const QImage &frame)
 {
-    // 始终缓存最新帧（关闭时也继续接收），【打开】瞬间即可显示最新画面
     m_latestFrame = frame;
     if (m_cameraOn)
         refreshVideoLabel();
@@ -561,7 +625,6 @@ void AIConsultPage::onDetectTongue()
         qDebug().noquote() << QStringLiteral("[舌苔检测] 串口控制器未初始化");
         return;
     }
-    // 跨线程投递到串口工作线程执行（QSerialPort 归其所有线程，不能直接调用）
     QMetaObject::invokeMethod(m_serialCtl, "triggerTongueDetect", Qt::QueuedConnection);
     qDebug().noquote() << QStringLiteral("[舌苔检测] 已触发单帧舌苔检测（下发 0x0010），"
                                          "检测到舌苔后设备将自动上行回报…");
@@ -573,17 +636,120 @@ void AIConsultPage::onResumeVideo()
         qDebug().noquote() << QStringLiteral("[舌苔检测] 串口控制器未初始化");
         return;
     }
-    // 跨线程投递：下发 0x0001，让设备恢复实时推流，解除检测后的冻结画面
     QMetaObject::invokeMethod(m_serialCtl, "resumeVideo", Qt::QueuedConnection);
     qDebug().noquote() << QStringLiteral("[舌苔检测] 已请求恢复实时预览（下发 0x0001），"
                                          "可再次点击【舌苔检测】采集舌苔…");
 }
 
+void AIConsultPage::deal_img()
+{
+    if (m_uploadImageData.isEmpty()) {
+        qDebug().noquote() << QStringLiteral("[舌苔上传] 无图片数据，跳过发送");
+        return;
+    }
+
+    const int totalBytes = m_uploadImageData.size();
+    const int chunkSize  = sizeof(IMG_T::img_data);   // 1200
+
+    const int totalFrags = (totalBytes + chunkSize - 1) / chunkSize;
+
+    qDebug().noquote() << QStringLiteral("[舌苔上传] 开始分片：共 %1 字节，每片 %2，共 %3 片")
+                              .arg(totalBytes).arg(chunkSize).arg(totalFrags);
+
+    QString ts = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    QString fullName = CData::m_name + "_" + ts;
+    qDebug() << "总数" << totalFrags;
+
+    // ★ 显示浮层进度条
+    if (m_progressBar) {
+        m_progressBar->setVisible(true);
+        m_progressBar->setRange(0, totalFrags);
+        m_progressBar->setValue(0);
+        m_progressBar->raise();
+    }
+
+    for (int i = 0; i < totalFrags; ++i) {
+        const int offset = i * chunkSize;
+        const int remain = totalBytes - offset;
+        const int thisLen = qMin(chunkSize, remain);
+
+        IMG_T img;
+        memset(&img, 0, sizeof(img));
+        img.index  = i;
+        img.total  = totalFrags;
+        img.width  = 640;
+        img.height = 640;
+        strcpy(img.file_name, fullName.toUtf8().constData());
+        memcpy(img.img_data, m_uploadImageData.constData() + offset, thisLen);
+
+        HEAD head;
+        memset(&head, 0, sizeof(head));
+        head.type        = SERVICE_TYPE::IMG_UPLOAD;
+        head.is_fragment = 1;
+        head.frag_index  = i;
+        head.frag_total  = totalFrags;
+        head.len         = sizeof(IMG_T);
+
+        const int packetSize = sizeof(HEAD) + sizeof(IMG_T);
+        QByteArray data;
+        data.resize(packetSize);
+        memcpy(data.data(),                &head, sizeof(HEAD));
+        memcpy(data.data() + sizeof(HEAD), &img,  sizeof(IMG_T));
+
+        emit data_ready(data, packetSize);
+
+        // ★ 更新进度条
+        if (m_progressBar) {
+            m_progressBar->setValue(i + 1);
+            if (i % 10 == 0 || i == totalFrags - 1) {
+                QApplication::processEvents();
+            }
+        }
+
+        QThread::msleep(5);
+    }
+
+    // ★ 隐藏浮层进度条
+    if (m_progressBar) {
+        m_progressBar->setVisible(false);
+        m_progressBar->setValue(0);
+    }
+
+    qDebug().noquote() << QStringLiteral("[舌苔上传] 分片发送完成，共 %1 片").arg(totalFrags);
+}
+
+void AIConsultPage::onUploadImage()
+{
+    const QImage upload = makeUploadImage(m_latestFrame);
+
+    if (upload.isNull()) {
+        qDebug() << "图片为空";
+        return;
+    }
+
+    QImage rgb = upload.convertToFormat(QImage::Format_RGB888);
+
+    const int w = rgb.width();
+    const int h = rgb.height();
+    const int channels = 3;
+
+    QByteArray raw;
+    raw.reserve(w * h * channels);
+    for (int y = 0; y < h; ++y) {
+        raw.append(reinterpret_cast<const char*>(rgb.constScanLine(y)),
+                   w * channels);
+    }
+
+    m_uploadImageData = raw;
+    qDebug().noquote() << QStringLiteral("[舌苔上传] 已生成像素数据：%1×%2 RGB，共 %3 字节")
+                              .arg(w).arg(h).arg(m_uploadImageData.size());
+    deal_img();
+}
+
 void AIConsultPage::onTongueDetected(int classId, float confidence)
 {
-    // 类别编码→舌苔名称，须与设备端模型 labels.txt / GetTongueClassCode 的顺序一致
     static const char *kTongueNames[] = {
-        "灰黑苔", "镜面舌", "薄白苔", "白腻苔", "黄腻苔", // cls 0~4
+        "灰黑苔", "镜面舌", "薄白苔", "白腻苔", "黄腻苔",
     };
     const int nameCount = static_cast<int>(sizeof(kTongueNames) / sizeof(kTongueNames[0]));
     const QString name = (classId >= 0 && classId < nameCount)
@@ -595,12 +761,9 @@ void AIConsultPage::onTongueDetected(int classId, float confidence)
                               .arg(classId)
                               .arg(QString::number(confidence * 100.0f, 'f', 1));
 
-    // 未识别（编码越界，设备端 0xFF）时不打扰 AI，仅打印日志
     if (classId < 0 || classId >= nameCount)
         return;
 
-    // 检测成功：把结果作为一条用户消息发给 AI 医生，请其给出调理建议
-    // （走统一发送入口，与打字 / 语音识别共用发送逻辑，AI 回复自动语音播报）
     const QString ask = QStringLiteral("通过边缘模型检测用户的舌头为%1，请你给出建议").arg(name);
     submitText(ask);
 }
@@ -610,10 +773,8 @@ void AIConsultPage::refreshVideoLabel()
     if (!m_videoLabel)
         return;
     if (m_cameraOn && !m_latestFrame.isNull()) {
-        // 打开且有图像：等比放大铺满（居中裁剪，不变形）
         m_videoLabel->setPixmap(makeCoverPixmap(m_latestFrame, m_videoLabel->size()));
     } else {
-        // 关闭或尚未收到帧：清空内容，露出纯黑底色
         m_videoLabel->clear();
     }
 }

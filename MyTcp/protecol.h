@@ -19,6 +19,13 @@ enum SERVICE_TYPE {
     PATIENT_GET_DOCTOR_INFO,
     PATIENT_APPOINTMENT,
 
+    DOCTOR_SET_RECORD,
+
+    GET_MEDICAL_RECORD,        //病历【第一套·列表】按 do
+    GET_MEDICAL_RECORD_DETAIL, //病历【第二套·
+    IMG_UPLOAD,                 //舌苔图片上传
+
+
 };
 
 typedef struct {
@@ -172,4 +179,13 @@ typedef struct {
     int temperature;
 }GETENVIR_REQ;
 
+
+typedef struct {
+    int index;
+    int total;
+    int width;
+    int height;
+    char img_data[8192];
+    char file_name[100];
+}IMG_T;
 #endif // PROTECOL_H

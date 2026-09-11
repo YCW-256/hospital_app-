@@ -62,6 +62,8 @@ private:
     LoginWindow       *m_loginWindow = nullptr; // 登录遮罩（子控件，不入 stack）
     RegisterWindow    *m_registerWindow = nullptr; // 注册遮罩（子控件，不入 stack）
     bool               m_loginEnabled = false; // 是否启用登录流程
+
+    AIConsultPage *aiConsultPage;
 signals:
     void send_data(QByteArray data,int size);
 

@@ -113,6 +113,7 @@ void MainWindow::init_data_connect()
     //医生信息拉取完成（CData::m_doctor_info 就绪）→ 刷新预约挂号页的医生卡片
     connect(m_socket, &SocketLink::get_doctor_info_success, appointmentPage, &AppointmentPage::flush);
 
+    connect(aiConsultPage,&AIConsultPage::data_ready,m_socket,&SocketLink::send_data);
 
 }
 
@@ -182,7 +183,7 @@ void MainWindow::initStackedPages()
     m_stack->addWidget(feePage);
 
     // 第 4 页：AI 快速问诊（原"药费查询"占位位，首页【药费查询】按钮进入）
-    auto *aiConsultPage = new AIConsultPage(this);
+    aiConsultPage = new AIConsultPage(this);
     connect(aiConsultPage, &AIConsultPage::backRequested, this,
             [this] { m_stack->setCurrentIndex(0); });
     m_stack->addWidget(aiConsultPage);

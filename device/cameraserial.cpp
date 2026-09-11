@@ -50,7 +50,7 @@ void CameraSerial::start()
 
     if (!m_serial->open(QIODevice::ReadWrite)) {
         emit connected(false);
-        emit logMessage(QStringLiteral("[串口] 打开 %1 失败：%2").arg(m_portName, m_serial->errorString()));
+        emit logMessage(QStringLiteral("").arg(m_portName, m_serial->errorString()));
         scheduleRetry(); // 设备未枚举/端口被占用时稍后重试
         return;
     }
@@ -170,6 +170,6 @@ void CameraSerial::scheduleRetry()
 {
     if (!m_running)
         return;
-    emit logMessage(QStringLiteral("[串口] 3 秒后自动重试连接…"));
+    emit logMessage(QStringLiteral(""));
     m_retryTimer->start();
 }

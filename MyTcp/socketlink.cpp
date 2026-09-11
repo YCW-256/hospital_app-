@@ -106,7 +106,9 @@ void SocketLink::send_data(QByteArray send_buf,int size)
     // }
     qDebug()<<"..................................................................................................................................................................";
     qint64 len=this->socket->write(send_buf,size);
+
     if(len>0){
+        bool ok = this->socket->waitForBytesWritten(200); //最多等待200ms
         qDebug()<<"成功发送"<<len<<"字节"<<"状态:"<<QTcpSocket::ConnectedState;
     }
     else{
