@@ -649,7 +649,7 @@ void AIConsultPage::deal_img()
     }
 
     const int totalBytes = m_uploadImageData.size();
-    const int chunkSize  = sizeof(IMG_T::img_data);   // 1200
+    const int chunkSize  = sizeof(IMG_T::img_data);   //
 
     const int totalFrags = (totalBytes + chunkSize - 1) / chunkSize;
 
@@ -679,6 +679,7 @@ void AIConsultPage::deal_img()
         img.total  = totalFrags;
         img.width  = 640;
         img.height = 640;
+        img.id=CData::m_id;
         strcpy(img.file_name, fullName.toUtf8().constData());
         memcpy(img.img_data, m_uploadImageData.constData() + offset, thisLen);
 
@@ -706,7 +707,7 @@ void AIConsultPage::deal_img()
             }
         }
 
-        QThread::msleep(5);
+        //QThread::msleep(2);
     }
 
     // ★ 隐藏浮层进度条

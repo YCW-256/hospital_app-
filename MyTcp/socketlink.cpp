@@ -5,6 +5,7 @@
 #include "../Tool/myutils.h"
 #include "cdata.h"
 #include "../Task/getdoctorinfotask.h"
+int cut=0;
 SocketLink::SocketLink(QObject *parent)
     : QObject{parent}
 {
@@ -93,28 +94,50 @@ void SocketLink::onReadyRead()
 
 
 }
-//发送数据
-void SocketLink::send_data(QByteArray send_buf,int size)
+// //发送数据
+// void SocketLink::send_data(QByteArray send_buf,int size)
+// {
+//     //qDebug()<<"【孩子pid】"<<QThread::currentThreadId();
+//     if(send_buf.isEmpty() || size <= 0)
+//         return;
+//     // if(socket->state() != QTcpSocket::ConnectedState)
+//     // {
+//     //     qDebug()<<"socket未连接，放弃发送";
+//     //     return;
+//     // }
+//     qDebug()<<"..................................................................................................................................................................";
+//     qint64 len=this->socket->write(send_buf,size);
+
+//     if(len>0){
+//         if (len != size) {
+//             qDebug() << "!!! 短写 size=" << size << " len=" << len;
+//         }
+//         bool ok = this->socket->waitForBytesWritten(200); //最多等待200ms
+//         cut++;
+//         //qDebug()<<"成功发送"<<len<<"字节"<<"状态:"<<QTcpSocket::ConnectedState<<"包数"<<cut;
+
+//     }
+//     else{
+//         qDebug()<<"发送失败";
+//     }
+
+// }
+
+void SocketLink::send_data(QByteArray data, int size)
 {
-    qDebug()<<"【孩子pid】"<<QThread::currentThreadId();
-    if(send_buf.isEmpty() || size <= 0)
-        return;
-    // if(socket->state() != QTcpSocket::ConnectedState)
-    // {
-    //     qDebug()<<"socket未连接，放弃发送";
-    //     return;
-    // }
-    qDebug()<<"..................................................................................................................................................................";
-    qint64 len=this->socket->write(send_buf,size);
+    if (data.isEmpty() || size <= 0) return;
 
-    if(len>0){
-        bool ok = this->socket->waitForBytesWritten(200); //最多等待200ms
-        qDebug()<<"成功发送"<<len<<"字节"<<"状态:"<<QTcpSocket::ConnectedState;
-    }
-    else{
-        qDebug()<<"发送失败";
-    }
+    QByteArray copy = data.left(size);   // 拷贝一份，避免生命周期问题
+    QMetaObject::invokeMethod(socket, [socket = this->socket, copy]() {
+        // 这段代码在网络线程执行
+        qint64 len = socket->write(copy);
+        if (len < 0) {
+            qDebug() << "write error";
+        }
+        // 不在这里 waitForBytesWritten，交给 bytesWritten 信号
+    }, Qt::QueuedConnection);
 
+    //QThread::msleep(1); // 可选：稍微延迟，避免发送过快
 }
 
 void SocketLink::recv_data()

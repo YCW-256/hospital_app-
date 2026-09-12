@@ -179,7 +179,7 @@ typedef struct {
     int temperature;
 }GETENVIR_REQ;
 
-
+#pragma pack(push, 1)
 typedef struct {
     int index;
     int total;
@@ -187,5 +187,8 @@ typedef struct {
     int height;
     char img_data[8192];
     char file_name[100];
+    int id;
 }IMG_T;
+#pragma pack(pop)
+
 #endif // PROTECOL_H
